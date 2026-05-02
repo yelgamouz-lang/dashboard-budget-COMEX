@@ -2,6 +2,7 @@
 ═══════════════════════════════════════════════════════════════════════════════
  COMEX BUDGET DASHBOARD — GROUPE INDUSTRIE MAROC — N+1
  Glassmorphism Dark / Mauve Néon · Direction Financière
+ VERSION CLOUD : Upload manuel du fichier Excel
 ═══════════════════════════════════════════════════════════════════════════════
 
 Lance avec :
@@ -10,13 +11,14 @@ Lance avec :
 Pré-requis :
     pip install streamlit pandas plotly openpyxl
 
-Le dashboard détecte automatiquement les modifications du fichier Excel
-(Budget_Groupe_Industrie_NPlus1.xlsx) via os.path.getmtime et invalide le cache
-pour rafraîchir tous les KPIs en temps réel.
+Cette version est conçue pour le déploiement multi-utilisateurs (Streamlit Cloud,
+Heroku, etc.). Chaque utilisateur charge son propre fichier Excel via la
+sidebar — aucune dépendance à un chemin disque local.
 """
 
-import os
-from pathlib import Path
+import hashlib
+import io
+from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -26,8 +28,6 @@ from openpyxl import load_workbook
 # ═══════════════════════════════════════════════════════════════════════════════
 # 0. CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-
-EXCEL_PATH = Path(__file__).parent / "Budget_Groupe_Industrie_NPlus1.xlsx"
 
 st.set_page_config(
     page_title="COMEX · Budget N+1 · Industrie Maroc",
@@ -145,6 +145,10 @@ def inject_css():
     @keyframes glow {
         0%, 100% { box-shadow: 0 0 20px rgba(176, 38, 255, 0.15); }
         50% { box-shadow: 0 0 30px rgba(176, 38, 255, 0.35); }
+    }
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.05); opacity: 0.85; }
     }
 
     /* ════════ KPI CARDS ════════ */
@@ -285,6 +289,88 @@ def inject_css():
         margin-bottom: 1rem;
     }
 
+    /* ════════ WELCOME / EMPTY STATE ════════ */
+    .welcome-container {
+        max-width: 720px;
+        margin: 3rem auto;
+        padding: 3rem 2.5rem;
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(176, 38, 255, 0.25);
+        border-radius: 20px;
+        text-align: center;
+        animation: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        position: relative;
+        overflow: hidden;
+    }
+    .welcome-container::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0; height: 3px;
+        background: linear-gradient(90deg, transparent, #B026FF, #D4AF37, #B026FF, transparent);
+        animation: glow 3s ease-in-out infinite;
+    }
+    .welcome-icon {
+        font-size: 3.5rem;
+        margin-bottom: 1rem;
+        animation: pulse 2.5s ease-in-out infinite;
+        text-shadow: 0 0 30px rgba(176, 38, 255, 0.6);
+    }
+    .welcome-title {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 1.8rem;
+        font-weight: 700;
+        background: linear-gradient(120deg, #FFFFFF 0%, #B026FF 70%, #D4AF37 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0 0 0.6rem 0;
+    }
+    .welcome-subtitle {
+        font-family: 'Manrope', sans-serif;
+        font-size: 0.85rem;
+        color: rgba(240, 240, 255, 0.6);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-bottom: 2rem;
+    }
+    .welcome-message {
+        font-size: 1rem;
+        color: rgba(240, 240, 255, 0.85);
+        line-height: 1.7;
+        margin-bottom: 1.5rem;
+    }
+    .welcome-instructions {
+        background: rgba(176, 38, 255, 0.08);
+        border-left: 3px solid #B026FF;
+        border-radius: 8px;
+        padding: 1.2rem 1.5rem;
+        margin: 1.5rem 0;
+        text-align: left;
+    }
+    .welcome-instructions ol {
+        color: rgba(240, 240, 255, 0.85);
+        font-size: 0.9rem;
+        line-height: 1.9;
+        padding-left: 1.2rem;
+        margin: 0;
+    }
+    .welcome-instructions ol li::marker {
+        color: #B026FF;
+        font-weight: 700;
+    }
+    .welcome-footer {
+        margin-top: 2rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid rgba(176, 38, 255, 0.15);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.7rem;
+        color: rgba(240, 240, 255, 0.4);
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+    }
+
     /* ════════ SIDEBAR ════════ */
     section[data-testid="stSidebar"] {
         background: rgba(10, 0, 20, 0.85);
@@ -325,6 +411,36 @@ def inject_css():
         letter-spacing: 0.15em;
         text-transform: uppercase;
         margin-bottom: 1.5rem;
+    }
+
+    /* File uploader styling */
+    [data-testid="stFileUploader"] {
+        background: rgba(176, 38, 255, 0.05);
+        border: 1px dashed rgba(176, 38, 255, 0.4);
+        border-radius: 10px;
+        padding: 0.5rem;
+        transition: all 0.3s ease;
+    }
+    [data-testid="stFileUploader"]:hover {
+        background: rgba(176, 38, 255, 0.1);
+        border-color: rgba(176, 38, 255, 0.7);
+    }
+    [data-testid="stFileUploader"] section {
+        background: transparent !important;
+        border: none !important;
+    }
+    [data-testid="stFileUploader"] button {
+        background: rgba(176, 38, 255, 0.2) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(176, 38, 255, 0.5) !important;
+        border-radius: 6px !important;
+        font-family: 'Manrope', sans-serif !important;
+        font-size: 0.75rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    [data-testid="stFileUploader"] small {
+        color: rgba(240, 240, 255, 0.5) !important;
     }
 
     /* Multiselect & selectbox styling */
@@ -415,47 +531,62 @@ def inject_css():
     /* Plotly modebar mauve */
     .modebar { background: transparent !important; }
     .modebar-btn svg path { fill: rgba(176, 38, 255, 0.6) !important; }
+
+    /* File info badge */
+    .file-info-badge {
+        background: rgba(0, 230, 118, 0.08);
+        border: 1px solid rgba(0, 230, 118, 0.3);
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+        margin-top: 0.8rem;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.7rem;
+        color: rgba(240, 240, 255, 0.85);
+        line-height: 1.5;
+    }
+    .file-info-badge .file-name {
+        color: #00E676;
+        font-weight: 600;
+        word-break: break-all;
+    }
+    .file-info-badge .file-meta {
+        color: rgba(240, 240, 255, 0.5);
+        margin-top: 0.3rem;
+        font-size: 0.65rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. DATA LAYER — Lecture Excel + cache + détection mtime
+# 2. DATA LAYER — Lecture Excel depuis BytesIO + cache par hash
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_file_mtime(path: Path) -> float:
-    """Retourne le mtime du fichier, ou -1 si introuvable."""
-    try:
-        return os.path.getmtime(path)
-    except OSError:
-        return -1.0
+def compute_file_hash(file_bytes: bytes) -> str:
+    """Hash MD5 du contenu — sert de clé de cache (invalidé si fichier change)."""
+    return hashlib.md5(file_bytes).hexdigest()
 
 
 @st.cache_data(show_spinner=False)
-def load_workbook_data(path_str: str, mtime: float) -> dict:
+def load_workbook_data(file_bytes: bytes, file_hash: str) -> dict:
     """
-    Charge l'ensemble des données nécessaires depuis l'Excel.
-    Le paramètre mtime est utilisé comme clé de cache : dès que le fichier
-    est modifié, le cache est invalidé automatiquement.
+    Charge l'ensemble des données nécessaires depuis un Excel en mémoire.
+    Le paramètre file_hash sert de clé de cache : dès que l'utilisateur charge
+    un fichier différent (hash différent), le cache est invalidé.
 
     Retourne un dict structuré, ou un dict {"error": ...} en cas d'échec.
     """
     try:
-        wb = load_workbook(path_str, data_only=True, read_only=True)
-    except FileNotFoundError:
-        return {"error": f"Fichier introuvable : {path_str}"}
-    except PermissionError:
-        return {"error": "Le fichier est ouvert par un autre utilisateur (verrou Excel). Fermez-le et réessayez."}
+        file_buffer = io.BytesIO(file_bytes)
+        wb = load_workbook(file_buffer, data_only=True, read_only=True)
     except Exception as e:
-        return {"error": f"Erreur de lecture : {type(e).__name__} — {e}"}
+        return {"error": f"Erreur de lecture du fichier : {type(e).__name__} — {e}"}
 
     data = {"error": None}
 
     # ── 6_CPC_Normalisé ──
     try:
         ws = wb["6_CPC_Normalisé"]
-        # Mapping ligne par ligne (cf. inspection)
-        # cols : D=N-1, E=N estimé, F=N+1
         def cell(r, c):
             v = ws.cell(row=r, column=c).value
             return float(v) if isinstance(v, (int, float)) else 0.0
@@ -479,7 +610,6 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
             "ebitda_pct": {"nm1": cell(72, 4), "n": cell(72, 5), "np1": cell(72, 6)},
             "marge_nette_pct": {"nm1": cell(73, 4), "n": cell(73, 5), "np1": cell(73, 6)},
         }
-        # CA total = 711 + 712
         for period in ("nm1", "n", "np1"):
             data["cpc"][f"ca_total_{period}"] = data["cpc"]["ventes_711"][period] + data["cpc"]["ventes_712"][period]
     except Exception as e:
@@ -507,7 +637,6 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
             "croissance_ca_cible": c(20, 4),
             "var_bfr": c(21, 3),
         }
-        # Waterfall data
         wf = []
         for r in range(26, 34):
             label = ws.cell(row=r, column=2).value
@@ -540,13 +669,11 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
     # ── 10_Heatmap_Ecarts ──
     try:
         ws = wb["10_Heatmap_Ecarts"]
-        # En-têtes en R5 col C..H (centres de coût)
         centers = []
         for col in range(3, 10):
             v = ws.cell(row=5, column=col).value
             if v and v != "Total" and isinstance(v, str):
                 centers.append(v)
-        # Comptes en col B de R6 à R19
         rows = []
         for r in range(6, 20):
             code = ws.cell(row=r, column=2).value
@@ -560,11 +687,10 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
     except Exception as e:
         return {"error": f"Erreur sur 10_Heatmap_Ecarts : {e}"}
 
-    # ── 5_Personnel_CNSS — détail par site/centre pour filtres ──
+    # ── 5_Personnel_CNSS ──
     try:
         ws = wb["5_Personnel_CNSS"]
         rows = []
-        # Données de R7 à R22 (16 équipes)
         for r in range(7, 23):
             entity = ws.cell(row=r, column=2).value
             site = ws.cell(row=r, column=3).value
@@ -583,10 +709,9 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
     except Exception as e:
         return {"error": f"Erreur sur 5_Personnel_CNSS : {e}"}
 
-    # ── 3_Drivers_CA — pour filtre dynamique CA par site ──
+    # ── 3_Drivers_CA ──
     try:
         ws = wb["3_Drivers_CA"]
-        # Bloc 3 (CA résultant) lignes 41..52
         rows = []
         for r in range(41, 53):
             entity = ws.cell(row=r, column=2).value
@@ -613,7 +738,6 @@ def load_workbook_data(path_str: str, mtime: float) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def fmt_mad(value: float, decimals: int = 0, suffix: str = "MAD") -> str:
-    """Formate un nombre en style MAD : 309 382 839 MAD (espaces fins comme séparateurs)."""
     if value is None or pd.isna(value):
         return "—"
     abs_v = abs(value)
@@ -628,7 +752,6 @@ def fmt_mad(value: float, decimals: int = 0, suffix: str = "MAD") -> str:
 
 
 def fmt_full_mad(value: float) -> str:
-    """Format complet sans abrégé : 309 382 839 MAD."""
     if value is None or pd.isna(value):
         return "—"
     return f"{value:,.0f}".replace(",", " ") + " MAD"
@@ -640,11 +763,16 @@ def fmt_pct(value: float, decimals: int = 1) -> str:
     return f"{value * 100:,.{decimals}f}".replace(".", ",") + " %"
 
 
+def fmt_size(num_bytes: int) -> str:
+    """Format taille fichier."""
+    for unit in ("o", "Ko", "Mo", "Go"):
+        if num_bytes < 1024:
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.1f} To"
+
+
 def trend_pill(current: float, previous: float, kpi_kind: str = "revenue") -> str:
-    """
-    Génère le HTML d'un badge de tendance.
-    kpi_kind = "revenue" : positif = good ; "cost" : positif = bad
-    """
     if previous == 0 or previous is None:
         return ""
     delta = (current - previous) / abs(previous)
@@ -659,7 +787,6 @@ def trend_pill(current: float, previous: float, kpi_kind: str = "revenue") -> st
 
 def kpi_card_html(label: str, value: str, value_class: str = "",
                   trend_html: str = "", sub: str = "") -> str:
-    """Génère le HTML d'une carte KPI."""
     return f"""
     <div class="kpi-card">
         <div class="kpi-label">{label}</div>
@@ -687,7 +814,6 @@ PLOTLY_LAYOUT_BASE = dict(
 
 
 def build_gauge(value_pct: float, target_pct: float, title: str = "MARGE EBITDA") -> go.Figure:
-    """Jauge néon mauve — affiche le taux EBITDA vs cible."""
     val = value_pct * 100
     tgt = target_pct * 100
     max_range = max(val, tgt) * 1.5 if max(val, tgt) > 0 else 25
@@ -737,48 +863,14 @@ def build_gauge(value_pct: float, target_pct: float, title: str = "MARGE EBITDA"
 
 
 def build_waterfall_cpc(cpc: dict) -> go.Figure:
-    """Cascade CA → Marge brute → EBITDA → REX → RN (N+1)."""
     ca = cpc["ca_total_np1"]
-    achats = -(cpc["achats_611"]["np1"] + cpc["achats_612"]["np1"])
-    autres_charges = -(cpc["charges_externes"]["np1"] + cpc["personnel"]["np1"]
-                       + cpc["dotations"]["np1"] + 980000 + 480000)  # 616 + 618
-    autres_charges_to_rex = -(cpc["charges_externes"]["np1"] + cpc["personnel"]["np1"]
-                              + cpc["dotations"]["np1"])
-    autres_produits = (1800000 + 500000 + 950000 + 250000)  # 713+714+718+719
-    impots_taxes = -(980000 + 480000)
-    res_fin = cpc["resultat_financier"]["np1"]
-    is_du = -cpc["is_du"]["np1"]
-
-    labels = ["CA HT N+1", "Achats consommés", "Marge brute",
-              "Autres charges expl.", "EBITDA",
-              "Dotations", "REX",
-              "Résultat financier", "Impôt (IS)", "Résultat Net"]
-    measures = ["absolute", "relative", "total",
-                "relative", "total",
-                "relative", "total",
-                "relative", "relative", "total"]
-    values = [
-        ca,
-        achats,
-        0,  # total → calcul auto
-        autres_charges_to_rex - (-cpc["dotations"]["np1"]) + impots_taxes,  # autres charges hors dotations + impôts/taxes + 618
-        0,
-        -cpc["dotations"]["np1"],
-        0,
-        res_fin,
-        is_du,
-        0,
-    ]
-    # Recompose proprement avec les vraies valeurs CGNC :
-    # CA + autres_produits_expl - achats - autres_charges_expl - dotations = REX
-    # REX + dotations = EBITDA  (donc on inverse l'ordre : MB → EBITDA → REX → RN)
-    # Définition simplifiée :
     mb = ca - (cpc["achats_611"]["np1"] + cpc["achats_612"]["np1"])
     ebitda = cpc["ebitda"]["np1"]
     rex = cpc["rex"]["np1"]
     rn = cpc["rn"]["np1"]
+    res_fin = cpc["resultat_financier"]["np1"]
+    is_du = -cpc["is_du"]["np1"]
 
-    # Cascade CA → MB → EBITDA → REX → RN
     labels_clean = ["CA HT N+1", "Achats consommés (611+612)", "MARGE BRUTE",
                     "Autres ch. expl. (hors dotations)", "EBITDA",
                     "Dotations (619)", "REX",
@@ -787,22 +879,20 @@ def build_waterfall_cpc(cpc: dict) -> go.Figure:
                       "relative", "total",
                       "relative", "total",
                       "relative", "total"]
-    autres_ch_hors_dot = mb - ebitda  # négatif
-    impact_fin_is = res_fin + is_du   # négatif
+    autres_ch_hors_dot = -(mb - ebitda)
+    impact_fin_is = res_fin + is_du
+
     values_clean = [
         ca,
         -(cpc["achats_611"]["np1"] + cpc["achats_612"]["np1"]),
         0,
-        -autres_ch_hors_dot if autres_ch_hors_dot < 0 else -autres_ch_hors_dot,
+        autres_ch_hors_dot,
         0,
         -cpc["dotations"]["np1"],
         0,
         impact_fin_is,
         0,
     ]
-    # Correction : autres_ch_hors_dot = mb - ebitda. Si mb=99M et ebitda=34M, écart = 65M positif → on doit retirer 65M
-    autres_ch_hors_dot = -(mb - ebitda)
-    values_clean[3] = autres_ch_hors_dot
 
     fig = go.Figure(go.Waterfall(
         name="P&L",
@@ -837,13 +927,10 @@ def build_waterfall_cpc(cpc: dict) -> go.Figure:
 
 
 def build_heatmap(heatmap_data: dict, centers_filter: list = None) -> go.Figure:
-    """Heatmap des écarts budgétaires par compte × centre de coût."""
     centers = heatmap_data["centers"]
     if centers_filter:
         keep_idx = [i for i, c in enumerate(centers) if c in centers_filter]
         centers = [centers[i] for i in keep_idx]
-    else:
-        keep_idx = list(range(len(centers)))
 
     if not centers:
         return go.Figure().update_layout(**PLOTLY_LAYOUT_BASE,
@@ -874,9 +961,9 @@ def build_heatmap(heatmap_data: dict, centers_filter: list = None) -> go.Figure:
         texttemplate="%{text}",
         textfont=dict(family="JetBrains Mono", size=10, color="#FFFFFF"),
         colorscale=[
-            [0.0, "rgba(0, 230, 118, 0.6)"],     # vert (économie)
-            [0.5, "rgba(20, 0, 40, 0.3)"],       # neutre sombre
-            [1.0, "rgba(255, 61, 113, 0.85)"],   # rouge (dérapage)
+            [0.0, "rgba(0, 230, 118, 0.6)"],
+            [0.5, "rgba(20, 0, 40, 0.3)"],
+            [1.0, "rgba(255, 61, 113, 0.85)"],
         ],
         zmid=0,
         showscale=True,
@@ -905,26 +992,15 @@ def build_heatmap(heatmap_data: dict, centers_filter: list = None) -> go.Figure:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. KPI ENGINE — Calcul des 10 KPIs (avec filtres)
+# 5. KPI ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compute_kpis(data: dict, filter_sites: list, filter_centers: list,
                  objectif_ca: float = 320_000_000) -> dict:
-    """
-    Calcule les 10 KPIs du DAF avec filtres sites + centres de coût.
-
-    Méthodo : Les KPIs financiers (CPC, Bilan) sont au niveau Groupe consolidé
-    et NON ventilés par site/CC dans le modèle (le modèle Excel n'a pas
-    de CPC par site). On applique les filtres uniquement sur les composantes
-    qui sont ventilées : personnel (5_Personnel) et CA drivers (3_Drivers_CA).
-    Le ratio Masse Salariale/CA et le poids CA sont donc impactés ; les autres
-    KPIs restent au niveau consolidé (badge "Groupe" affiché en sous-titre).
-    """
     cpc = data["cpc"]
     dash = data["dashboard"]
     bilan = data["bilan"]
 
-    # Périmètre filtré : par défaut tous les sites/centres
     pers_rows = data["personnel"]
     if filter_sites:
         pers_rows = [r for r in pers_rows if r["site"] in filter_sites]
@@ -937,22 +1013,15 @@ def compute_kpis(data: dict, filter_sites: list, filter_centers: list,
         drivers_rows = [r for r in drivers_rows if r["site"] in filter_sites]
     ca_filtered = sum(r["ca_np1"] for r in drivers_rows)
 
-    # Si pas de filtre, on prend les valeurs Groupe officielles
     is_full_perimeter = (not filter_sites) and (not filter_centers)
 
     ca_np1 = cpc["ca_total_np1"] if is_full_perimeter else ca_filtered
     ca_n = cpc["ca_total_n"]
     ca_nm1 = cpc["ca_total_nm1"]
 
-    # Masse salariale : si filtre site/centre, on prend la valeur filtrée
     masse_sal = cpc["personnel"]["np1"] if is_full_perimeter else masse_sal_filtered
-
-    # Ratio masse salariale / CA Groupe (ou CA filtré si filtre actif)
     ca_for_ratio = ca_np1 if ca_np1 > 0 else cpc["ca_total_np1"]
 
-    # Point mort : Charges fixes / Taux marge sur coûts variables
-    # Approche simplifiée : Charges fixes ≈ personnel + charges externes + dotations + autres
-    # Coûts variables ≈ achats consommés (611+612)
     charges_fixes = (cpc["personnel"]["np1"] + cpc["charges_externes"]["np1"]
                      + cpc["dotations"]["np1"] + 980000 + 480000)
     couts_variables = cpc["achats_611"]["np1"] + cpc["achats_612"]["np1"]
@@ -961,43 +1030,32 @@ def compute_kpis(data: dict, filter_sites: list, filter_centers: list,
     point_mort = charges_fixes / taux_marge_cv if taux_marge_cv > 0 else 0
 
     return {
-        # 1. CA Global HT
         "ca_np1": ca_np1,
         "ca_n": ca_n,
         "ca_nm1": ca_nm1,
-        # 2. EBITDA
         "ebitda_np1": cpc["ebitda"]["np1"],
         "ebitda_n": cpc["ebitda"]["n"],
         "ebitda_nm1": cpc["ebitda"]["nm1"],
         "marge_ebitda": cpc["ebitda_pct"]["np1"],
         "marge_ebitda_cible": dash["marge_ebitda_cible"],
-        # 3. Résultat Net
         "rn_np1": cpc["rn"]["np1"],
         "rn_n": cpc["rn"]["n"],
         "rn_nm1": cpc["rn"]["nm1"],
-        # 4. Marge brute
         "marge_brute_pct": cpc["marge_brute_pct"]["np1"],
         "marge_brute_pct_n": cpc["marge_brute_pct"]["n"],
-        # 5. Poids masse salariale / CA
         "ratio_personnel": masse_sal / ca_for_ratio if ca_for_ratio > 0 else 0,
         "ratio_personnel_n": cpc["personnel"]["n"] / cpc["ca_total_n"] if cpc["ca_total_n"] > 0 else 0,
         "masse_salariale": masse_sal,
-        # 6. Poids charges externes / CA
         "ratio_charges_ext": cpc["charges_externes"]["np1"] / ca_groupe if ca_groupe > 0 else 0,
         "ratio_charges_ext_n": cpc["charges_externes"]["n"] / cpc["ca_total_n"] if cpc["ca_total_n"] > 0 else 0,
-        # 7. DSO
         "dso": bilan["dso_np1"],
         "dso_cible": dash["dso_cible"],
-        # 8. Gearing
         "gearing": bilan["gearing_np1"],
         "gearing_cible": dash["gearing_cible"],
-        # 9. Point mort
         "point_mort": point_mort,
         "ratio_point_mort": point_mort / ca_groupe if ca_groupe > 0 else 0,
-        # 10. Atteinte objectif
         "objectif_ca": objectif_ca,
         "atteinte_objectif": ca_np1 / objectif_ca if objectif_ca > 0 else 0,
-        # Méta
         "is_full_perimeter": is_full_perimeter,
         "perimeter_label": "GROUPE CONSOLIDÉ" if is_full_perimeter else f"{len(filter_sites or [])} SITE(S) · {len(filter_centers or [])} CC",
     }
@@ -1007,11 +1065,46 @@ def compute_kpis(data: dict, filter_sites: list, filter_centers: list,
 # 6. RENDER LAYERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def render_header(perimeter_label: str, mtime: float):
-    """Bandeau d'en-tête avec titre, périmètre et statut live."""
-    from datetime import datetime
-    ts = datetime.fromtimestamp(mtime).strftime("%d/%m/%Y · %H:%M") if mtime > 0 else "—"
+def render_welcome_screen():
+    """Écran d'accueil affiché tant qu'aucun fichier n'est uploadé."""
+    st.markdown("""
+    <h1 class="hero-title">COMEX · Budget N+1</h1>
+    <p class="hero-subtitle">Direction Financière Groupe · Industrie Maroc · CGNC</p>
+    <div class="hero-divider"></div>
 
+    <div class="welcome-container">
+        <div class="welcome-icon">◆</div>
+        <div class="welcome-title">Bienvenue sur le Dashboard COMEX</div>
+        <div class="welcome-subtitle">Pilotage Budgétaire Groupe · N+1</div>
+
+        <div class="welcome-message">
+            Pour démarrer l'analyse, veuillez charger votre fichier Excel
+            de budget consolidé via le panneau latéral à gauche.
+        </div>
+
+        <div class="welcome-instructions">
+            <ol>
+                <li>Ouvrez le panneau latéral (icône <strong>›</strong> en haut à gauche si masqué)</li>
+                <li>Cliquez sur <strong>« Browse files »</strong> dans la zone de chargement</li>
+                <li>Sélectionnez votre fichier <code style="color:#B026FF;">Budget_Groupe_Industrie_NPlus1.xlsx</code></li>
+                <li>Le dashboard se génère automatiquement avec tous les KPIs et visualisations</li>
+            </ol>
+        </div>
+
+        <div class="welcome-message" style="font-size:0.85rem; color:rgba(240,240,255,0.55);">
+            ◆ Vos données ne sont jamais stockées sur le serveur — elles sont
+            traitées uniquement en mémoire pendant votre session.
+        </div>
+
+        <div class="welcome-footer">
+            Référentiel CGNC · Loi 69-21 · Article 144 CGI<br>
+            v1.1 Cloud · Confidentiel DAF
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_header(perimeter_label: str, file_name: str, upload_time: str):
     col1, col2 = st.columns([5, 2])
     with col1:
         st.markdown(f"""
@@ -1021,7 +1114,7 @@ def render_header(perimeter_label: str, mtime: float):
     with col2:
         st.markdown(f"""
         <div style="text-align:right; padding-top:1rem;">
-            <span class="status-pill status-live">LIVE · {ts}</span>
+            <span class="status-pill status-live">LIVE · {upload_time}</span>
             <div style="font-family:'JetBrains Mono'; font-size:0.7rem;
                         color:rgba(240,240,255,0.45); margin-top:0.5rem;
                         letter-spacing:0.1em;">
@@ -1033,13 +1126,11 @@ def render_header(perimeter_label: str, mtime: float):
 
 
 def render_kpi_row_1(k: dict):
-    """Première ligne : 5 KPIs principaux (CA, EBITDA, RN, Marge brute, Atteinte obj)."""
     st.markdown('<div class="section-title">Indicateurs Financiers Clés</div>',
                 unsafe_allow_html=True)
 
     cols = st.columns(5, gap="medium")
     cards = [
-        # 1. CA Global
         kpi_card_html(
             "Chiffre d'affaires HT · N+1",
             fmt_full_mad(k["ca_np1"]).replace(" MAD", '<span class="kpi-unit">MAD</span>'),
@@ -1047,7 +1138,6 @@ def render_kpi_row_1(k: dict):
             trend_html=trend_pill(k["ca_np1"], k["ca_n"], "revenue"),
             sub=f"vs N estimé · {fmt_mad(k['ca_n'])}",
         ),
-        # 2. EBITDA
         kpi_card_html(
             "EBITDA · N+1",
             fmt_full_mad(k["ebitda_np1"]).replace(" MAD", '<span class="kpi-unit">MAD</span>'),
@@ -1055,7 +1145,6 @@ def render_kpi_row_1(k: dict):
             trend_html=trend_pill(k["ebitda_np1"], k["ebitda_nm1"], "revenue"),
             sub=f"Marge {fmt_pct(k['marge_ebitda'])} · cible {fmt_pct(k['marge_ebitda_cible'])}",
         ),
-        # 3. Résultat Net
         kpi_card_html(
             "Résultat Net · N+1",
             fmt_full_mad(k["rn_np1"]).replace(" MAD", '<span class="kpi-unit">MAD</span>'),
@@ -1063,7 +1152,6 @@ def render_kpi_row_1(k: dict):
             trend_html=trend_pill(k["rn_np1"], k["rn_nm1"], "revenue"),
             sub=f"vs N-1 · {fmt_mad(k['rn_nm1'])}",
         ),
-        # 4. Marge brute
         kpi_card_html(
             "Taux de Marge Brute",
             f"{k['marge_brute_pct'] * 100:.1f}".replace(".", ",") + '<span class="kpi-unit">%</span>',
@@ -1071,7 +1159,6 @@ def render_kpi_row_1(k: dict):
             trend_html=trend_pill(k["marge_brute_pct"], k["marge_brute_pct_n"], "revenue"),
             sub="Ventes − Achats consommés / CA",
         ),
-        # 10. Atteinte objectif
         kpi_card_html(
             "Atteinte Objectif CA",
             f"{k['atteinte_objectif'] * 100:.1f}".replace(".", ",") + '<span class="kpi-unit">%</span>',
@@ -1091,27 +1178,23 @@ def render_kpi_row_1(k: dict):
 
 
 def render_kpi_row_2(k: dict):
-    """Deuxième ligne : 5 KPIs structure (ratios, DSO, Gearing, point mort)."""
     st.markdown('<div class="section-title">Structure & Ratios de Pilotage</div>',
                 unsafe_allow_html=True)
 
     cols = st.columns(5, gap="medium")
     cards = [
-        # 5. Poids Personnel / CA
         kpi_card_html(
             "Masse Salariale / CA",
             f"{k['ratio_personnel'] * 100:.1f}".replace(".", ",") + '<span class="kpi-unit">%</span>',
             trend_html=trend_pill(k["ratio_personnel"], k["ratio_personnel_n"], "cost"),
             sub=f"Compte 617 · {fmt_mad(k['masse_salariale'])}",
         ),
-        # 6. Poids Charges externes / CA
         kpi_card_html(
             "Charges Externes / CA",
             f"{k['ratio_charges_ext'] * 100:.1f}".replace(".", ",") + '<span class="kpi-unit">%</span>',
             trend_html=trend_pill(k["ratio_charges_ext"], k["ratio_charges_ext_n"], "cost"),
             sub="Comptes 613-614 · ZBB",
         ),
-        # 7. DSO
         kpi_card_html(
             "DSO · Délai Recouvrement",
             f"{k['dso']:.0f}".replace(",", " ") + '<span class="kpi-unit">jours</span>',
@@ -1123,7 +1206,6 @@ def render_kpi_row_2(k: dict):
             ),
             sub=f"Cible Loi 69-21 · {k['dso_cible']:.0f} j",
         ),
-        # 8. Gearing
         kpi_card_html(
             "Gearing · Endettement",
             f"{k['gearing'] * 100:.1f}".replace(".", ",") + '<span class="kpi-unit">%</span>',
@@ -1135,7 +1217,6 @@ def render_kpi_row_2(k: dict):
             ),
             sub=f"Dettes fin. / Capitaux propres · cible {k['gearing_cible'] * 100:.0f} %",
         ),
-        # 9. Point mort
         kpi_card_html(
             "Point Mort · Seuil Rentabilité",
             fmt_mad(k["point_mort"]).replace(" MAD", '<span class="kpi-unit">MAD</span>')
@@ -1155,7 +1236,6 @@ def render_kpi_row_2(k: dict):
 
 
 def render_visuals(data: dict, k: dict, filter_centers: list):
-    """Rangée jauge + waterfall, puis heatmap."""
     st.markdown('<div class="section-title">Vues Stratégiques</div>',
                 unsafe_allow_html=True)
 
@@ -1175,7 +1255,6 @@ def render_visuals(data: dict, k: dict, filter_centers: list):
                         config={"displayModeBar": False})
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Heatmap pleine largeur
     st.markdown('<div class="chart-container">', unsafe_allow_html=True)
     hm_fig = build_heatmap(data["heatmap"], filter_centers)
     st.plotly_chart(hm_fig, use_container_width=True,
@@ -1183,18 +1262,42 @@ def render_visuals(data: dict, k: dict, filter_centers: list):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_sidebar(data: dict) -> tuple:
-    """Sidebar avec filtres et bouton refresh. Retourne (sites, centers, objectif)."""
+def render_sidebar_uploader():
+    """Section sidebar pour l'upload du fichier — toujours visible."""
     with st.sidebar:
         st.markdown("""
         <div class="sidebar-brand">◆ COMEX · DAF</div>
         <div class="sidebar-tagline">Pilotage Budgétaire N+1</div>
         """, unsafe_allow_html=True)
 
-        # Filtres
+        st.markdown("**Source de données**")
+        uploaded = st.file_uploader(
+            "Fichier Excel budget",
+            type=["xlsx", "xlsm"],
+            help="Glissez-déposez ou parcourez votre fichier de budget consolidé. "
+                 "Les données restent en mémoire pendant votre session.",
+            key="excel_uploader",
+            label_visibility="collapsed",
+        )
+        return uploaded
+
+
+def render_sidebar_filters(data: dict, uploaded_file) -> tuple:
+    """Sidebar avec filtres + info fichier (affiché seulement après upload)."""
+    with st.sidebar:
+        # Badge info fichier
+        size_str = fmt_size(uploaded_file.size) if uploaded_file else "—"
+        st.markdown(f"""
+        <div class="file-info-badge">
+            <div>● FICHIER CHARGÉ</div>
+            <div class="file-name">{uploaded_file.name if uploaded_file else "—"}</div>
+            <div class="file-meta">{size_str} · Session active</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
         st.markdown("**Périmètre d'analyse**")
 
-        # Sites disponibles
         sites_avail = sorted({r["site"] for r in data["personnel"]})
         sites = st.multiselect(
             "Sites industriels",
@@ -1204,7 +1307,6 @@ def render_sidebar(data: dict) -> tuple:
             key="filter_sites",
         )
 
-        # Centres de coût
         centers_avail = sorted({r["centre"] for r in data["personnel"]})
         centers = st.multiselect(
             "Centres de coût",
@@ -1228,28 +1330,24 @@ def render_sidebar(data: dict) -> tuple:
 
         st.markdown("---")
 
-        # Bouton refresh
-        if st.button("⟳ ACTUALISER LES DONNÉES", use_container_width=True):
+        if st.button("⟳ RECHARGER LE FICHIER", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
-        # Auto-refresh info
         st.markdown("""
         <div style="font-size:0.7rem; color:rgba(240,240,255,0.4);
                     margin-top:1rem; line-height:1.5;
                     font-family:'JetBrains Mono', monospace;">
-            <div style="color:#00E676; margin-bottom:0.3rem;">● AUTO-REFRESH ACTIF</div>
-            Détection automatique<br>des modifications<br>via os.path.getmtime
+            <div style="color:#00E676; margin-bottom:0.3rem;">● MODE SESSION</div>
+            Données traitées uniquement<br>en mémoire — non persistées<br>côté serveur
         </div>
-        """, unsafe_allow_html=True)
 
-        st.markdown("""
         <div style="margin-top:2rem; padding-top:1rem;
                     border-top:1px solid rgba(176,38,255,0.15);
                     font-size:0.65rem; color:rgba(240,240,255,0.3);
                     letter-spacing:0.1em; text-transform:uppercase;">
             Référentiel CGNC<br>Loi 69-21 · Article 144 CGI<br>
-            v1.0 · Confidentiel DAF
+            v1.1 Cloud · Confidentiel DAF
         </div>
         """, unsafe_allow_html=True)
 
@@ -1272,28 +1370,33 @@ def render_footer():
 def main():
     inject_css()
 
-    # Vérification fichier
-    if not EXCEL_PATH.exists():
-        st.error(f"Fichier introuvable : `{EXCEL_PATH}`. "
-                 f"Placez le fichier Excel dans le même dossier que `app.py`.")
+    # Étape 1 : sidebar avec uploader (toujours visible)
+    uploaded_file = render_sidebar_uploader()
+
+    # Étape 2 : si pas de fichier, écran d'accueil
+    if uploaded_file is None:
+        render_welcome_screen()
         st.stop()
 
-    mtime = get_file_mtime(EXCEL_PATH)
-    data = load_workbook_data(str(EXCEL_PATH), mtime)
+    # Étape 3 : lecture du fichier en mémoire
+    file_bytes = uploaded_file.getvalue()
+    file_hash = compute_file_hash(file_bytes)
+
+    with st.spinner("Chargement et analyse du fichier Excel..."):
+        data = load_workbook_data(file_bytes, file_hash)
 
     if data.get("error"):
         st.error(f"⚠ {data['error']}")
-        st.info("Le dashboard se réactualisera automatiquement dès que le problème sera résolu.")
+        st.info("Vérifiez que le fichier respecte le format attendu "
+                "(structure CGNC, onglets 6_CPC_Normalisé, 2_Dashboard, etc.).")
         st.stop()
 
-    # Sidebar (avec filtres)
-    sites, centers, objectif = render_sidebar(data)
-
-    # KPIs avec filtres
+    # Étape 4 : filtres (sidebar) + KPIs + render complet
+    sites, centers, objectif = render_sidebar_filters(data, uploaded_file)
     k = compute_kpis(data, sites, centers, objectif)
 
-    # Render
-    render_header(k["perimeter_label"], mtime)
+    upload_time = datetime.now().strftime("%d/%m/%Y · %H:%M")
+    render_header(k["perimeter_label"], uploaded_file.name, upload_time)
     render_kpi_row_1(k)
     render_kpi_row_2(k)
     render_visuals(data, k, centers)
